@@ -17,12 +17,12 @@
 #include <sstream>
 #include <vector>
 #include <fstream>
+#include <stdlib.h>
 #include <direct.h>
 using namespace std;
 
 //include our own libraries
 #include "ConsoleUtils.h"	//for Clrscr, Gotoxy, etc.
-
 //---------------------------------------------------------------------------
 //----- define constants
 //---------------------------------------------------------------------------
@@ -37,6 +37,7 @@ const char WALL('#');    	//border
 const char BOMB('0');
 const char DETONATOR('T');
 const char EXIT('X');
+const char PILL('P');
 //defining the command letters to move the bear on the maze
 const int  UP(72);			//up arrow
 const int  DOWN(80); 		//down arrow
@@ -64,6 +65,7 @@ struct Bear {
 	char symbol;
 	bool visible;
 	bool moved;
+	bool invincible;
 };
 
 struct Player{
@@ -73,6 +75,11 @@ struct Player{
 	bool cheating = false;
 };
 
+struct Pill
+{
+	Item item;
+	int moves;
+};
 //---------------------------------------------------------------------------
 //----- run game
 //---------------------------------------------------------------------------
@@ -80,14 +87,14 @@ struct Player{
 int main()
 {
 	//function declarations (prototypes)
-	void initialiseGame(char g[][SIZEX], char m[][SIZEX], vector<Bear>& bear, vector<Bomb>& bombs);
+	void initialiseGame(char g[][SIZEX], char m[][SIZEX], vector<Bear>& bear, vector<Bomb>& bombs, Pill& pill);
 	void paintGame(const char g[][SIZEX], string mess, int noOfBears, int noOfMoves, Player player);
 	bool wantsToQuit(const int key);
 	bool isArrowKey(const int k);
 	bool isCheatKey(const char key);
 	int  getKeyPress();
 	bool updateGameData(const char g[][SIZEX], vector<Bear>& bear, vector<Bomb>& bombs, const int key, string& mess, int& numberOfMoves, const Player& player);
-	void updateGrid(char g[][SIZEX], const char m[][SIZEX], const vector<Bear> bear, const vector<Bomb> bombs);
+	void updateGrid(char g[][SIZEX], const char m[][SIZEX], const vector<Bear> bear, const vector<Bomb> bombs, Pill& pill);
 	void endProgram();
 	void showMessage(const WORD backColour, const WORD textColour, int x, int y, const string message);
 	string paintEntryScreen();
@@ -103,7 +110,8 @@ int main()
 	bears.push_back(Bear());
 	bears.push_back(Bear());
 	bears.push_back(Bear());
-	
+	srand(time(NULL));
+	Pill pill;
 
 	vector<Bomb> bombs;
 	const int noOfBombs = bombs.size();
@@ -118,7 +126,7 @@ int main()
 		cout << "Created new player save folder: " << playerFileLocation;
 	player = loadPlayer(paintEntryScreen()); //Load the details of the player (if any) from file.
 	//action...
-	initialiseGame(grid, maze, bears, bombs);	//initialise grid (incl. walls & bear)
+	initialiseGame(grid, maze, bears, bombs, pill);	//initialise grid (incl. walls & bear)
 	paintGame(grid, message, bears.size(), noOfMoves, player);			//display game info, modified grid & messages
 	int key(getKeyPress()); 			//read in  selected key: arrow or letter command
 	while (!wantsToQuit(key) && !forceQuit)			//while user does not want to quit
@@ -144,7 +152,7 @@ int main()
 						savePlayer(player);			  //And update their file.
 					}
 				}
-				updateGrid(grid, maze, bears, bombs);			//update grid information
+				updateGrid(grid, maze, bears, bombs, pill);			//update grid information
 			}
 			else
 				message = "INVALID KEY!";	//set 'Invalid key' message
@@ -161,15 +169,23 @@ int main()
 //----- initialise game state
 //---------------------------------------------------------------------------
 
-void initialiseGame(char grid[][SIZEX], char maze[][SIZEX], vector<Bear>& bears, vector<Bomb>& bombs)
+void initialiseGame(char grid[][SIZEX], char maze[][SIZEX], vector<Bear>& bears, vector<Bomb>& bombs, Pill& pill)
 { //initialise grid & place bear in middle
 	void setInitialMazeStructure(char maze[][SIZEX]);
 	void setInitialDataFromMaze(char maze[][SIZEX], vector<Bear>& bears, vector<Bomb>& bombs);
-	void updateGrid(char g[][SIZEX], const char m[][SIZEX], vector<Bear> bears, vector<Bomb> bombs);
+	void updateGrid(char g[][SIZEX], const char m[][SIZEX], vector<Bear> bears, vector<Bomb> bombs, Pill& pill);
+
+	pill.item.symbol = PILL;
+	pill.moves = 0;
+	pill.item.visible = false;
+	pill.item.x = 0;
+	pill.item.y = 0;
 
 	setInitialMazeStructure(maze);		//initialise maze
 	setInitialDataFromMaze(maze, bears, bombs);	//initialise bear's position
-	updateGrid(grid, maze, bears, bombs);		//prepare grid
+	updateGrid(grid, maze, bears, bombs, pill);		//prepare grid
+
+	
 }
 
 void setInitialMazeStructure(char maze[][SIZEX])
@@ -215,6 +231,7 @@ void setInitialDataFromMaze(char maze[][SIZEX], vector<Bear>& bears, vector<Bomb
 					bears[noOfBears].y = row;
 					bears[noOfBears].symbol = BEAR;
 					bears[noOfBears].visible = true;
+					bears[noOfBears].invincible = false;
 					noOfBears++;
 					maze[row][col] = TUNNEL;
 					break;
@@ -247,11 +264,12 @@ void setInitialDataFromMaze(char maze[][SIZEX], vector<Bear>& bears, vector<Bomb
 //----- update grid state
 //---------------------------------------------------------------------------
 
-void updateGrid(char grid[][SIZEX], const char maze[][SIZEX], const vector<Bear> bears, const vector<Bomb> bombs)
+void updateGrid(char grid[][SIZEX], const char maze[][SIZEX], const vector<Bear> bears, const vector<Bomb> bombs, Pill& pill)
 { //update grid configuration after each move
 	void setMaze(char g[][SIZEX], const char b[][SIZEX]);
 	void placeBear(char g[][SIZEX], const Bear bear);
 	void placeBomb(char g[][SIZEX], const Bomb bomb);
+	void placePill(char g[][SIZEX], Pill& pill);
 
 	setMaze(grid, maze);	//reset the empty maze configuration into grid
 	for (auto bear : bears)
@@ -263,6 +281,7 @@ void updateGrid(char grid[][SIZEX], const char maze[][SIZEX], const vector<Bear>
 	{
 		placeBomb(grid, bomb);
 	}
+	placePill(grid, pill);
 }
 
 void setMaze(char grid[][SIZEX], const char maze[][SIZEX])
@@ -284,6 +303,31 @@ void placeBomb(char g[][SIZEX], const Bomb bomb)
 		g[bomb.item.y][bomb.item.x] = bomb.item.symbol;
 }
 
+void placePill(char g[][SIZEX], Pill& pill)
+{
+	if (pill.moves == 10)
+	{
+		pill.moves = 0;
+		pill.item.visible = true;
+		bool placed = false;
+		while (placed == false)
+		{
+			int x = rand() % SIZEX;
+			int y = rand() % SIZEY;
+			if (g[y][x] == TUNNEL)
+			{
+				pill.item.x = x;
+				pill.item.y = y;
+				placed = true;
+			}
+		}	
+	}
+	if (pill.item.visible)
+	{
+		g[pill.item.y][pill.item.x] = pill.item.symbol;
+	}
+	pill.moves++;
+}
 //---------------------------------------------------------------------------
 //----- move the bear
 //---------------------------------------------------------------------------
@@ -708,6 +752,9 @@ void paintGrid(const char g[][SIZEX])
 					SelectBackColour(clGrey);
 					SelectTextColour(clBlack);
 					break;
+				case PILL:
+					SelectBackColour(clBlack);
+					SelectTextColour(clMagenta);
 				default:
 					SelectBackColour(clBlack);
 					SelectTextColour(clWhite);
